@@ -1,9 +1,13 @@
 from gevent import socket
 from gevent.pool import Pool
 from gevent.server import StreamServer
+from collections import namedtuple
+from io import BytesIO
 
 class Disconnect(Exception): pass
 class CommandError(Exception): pass
+
+Error = namedtuple("Error", ("message",))
 
 class ProtocolHandler(object):
     # redis protocal: https://redis.io/topics/protocol
@@ -15,17 +19,30 @@ class ProtocolHandler(object):
             "$": self.handle_bulk_strings,
             "*": self.handle_arrays
         }
+
     def handle_request(self, socket_file):
-        pass
+        handler_key = socket_file.read(1)
+        if not handler_key:
+            raise Disconnect()
+
+        if handler_key not in self.handler_map:
+            raise CommandError("Bad request")
+
+        return self.handler_map[handler_key](socket_file)
+
 
     def write_response(self, socket_file, data):
-        pass
+        buf = BytesIO()
+        self._write(data, buf)
+        # buf.seek(0)
+        socket_file.write(buf.getvalue())
+        socket_file.flush()
 
     def handle_simple_string(self, socket_file):
         return socket_file.readline().rstrip()
 
     def handle_errors(self, socket_file):
-        pass
+        return Error(socket_file.readline().rstrip())
 
     def handle_integers(self, socket_file):
         return int(socket_file.readline().rstrip())
@@ -39,9 +56,32 @@ class ProtocolHandler(object):
     def handle_arrays(self, socket_file):
         array_length = int(socket_file.readline().rstrip())
         result = []
-        for i in range array_length:
+        for dummy_i in range(array_length):
             result.append(self.handle_request(socket_file))
         return result
+
+    def _write(self, data, buf):
+        # convert string to bytes first
+        if isinstance(data, str):
+            data = data.encode("utf-8")
+
+        if isinstance(data, str):
+            buf.write("+%s\r\n" % data)
+        elif isinstance(data, Error):
+            buf.write("-%s\r\n" % (data.message))
+        elif isinstance(data, bytes):
+            buf.write("$%s\r\n%s\r\n" % len(data), data)
+        elif isinstance(data, int):
+            buf.write(":%s\r\n" % data)
+        elif isinstance(data, list):
+            buf.write("*%s\r\n" % len(data))
+            for item in range(data):
+                self._write(item, buf)
+        elif data is None:
+            buf.write("$-1\r\n")
+        else:
+            raise CommandError("Unrecognized type: %s" % type(data))
+
 
 class Server(object):
     def __init__(self, host="127.0.0.1", port="3000", max_client=64):
