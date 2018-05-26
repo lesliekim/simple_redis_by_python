@@ -12,7 +12,7 @@ class ProtocolHandler(object):
             "*": self.handle_arrays
         }
 
-    def handle_request(self, socket_file):
+    def recv(self, socket_file):
         handler_key = socket_file.read(1)
         if not handler_key:
             raise Disconnect()
@@ -23,7 +23,7 @@ class ProtocolHandler(object):
         return self.handler_map[handler_key](socket_file)
 
 
-    def write_response(self, socket_file, data):
+    def send(self, socket_file, data):
         buf = BytesIO()
         self._write(data, buf)
         # buf.seek(0)
@@ -42,6 +42,8 @@ class ProtocolHandler(object):
     # for a single binary safe string
     def handle_bulk_strings(self, socket_file):
         num = int(socket_file.readline().rstrip())
+        if num <= 0:
+            return None
         bulk_string = socket_file.read(num + 2)
         return bulk_string[:-2]
 
@@ -49,7 +51,7 @@ class ProtocolHandler(object):
         array_length = int(socket_file.readline().rstrip())
         result = []
         for dummy_i in range(array_length):
-            result.append(self.handle_request(socket_file))
+            result.append(self.recv(socket_file))
         return result
 
     def _write(self, data, buf):
@@ -67,7 +69,7 @@ class ProtocolHandler(object):
             buf.write(":%s\r\n" % data)
         elif isinstance(data, list):
             buf.write("*%s\r\n" % len(data))
-            for item in range(data):
+            for item in data:
                 self._write(item, buf)
         elif data is None:
             buf.write("$-1\r\n")

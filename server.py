@@ -5,12 +5,12 @@ from error import Disconnect, CommandError, Error
 from protocol import ProtocolHandler
 
 class Server(object):
-    def __init__(self, host="127.0.0.1", port="3000", max_client=64):
+    def __init__(self, host="127.0.0.1", port=4567, max_client=64):
         self._pool = Pool(max_client)
         self._server = StreamServer(
             (host, port),
             self.connect_handler,
-            self._pool
+            spawn=self._pool
         )
         self._protocol = ProtocolHandler()
         self._kv = {}
@@ -25,12 +25,12 @@ class Server(object):
             "MSET": self._mset, #batch set
         }
 
-    def connect_handler(self, conn):
+    def connect_handler(self, conn, address):
         socket_file = conn.makefile('rwb')
 
         while True:
             try:
-                data = self._protocol.handle_request(socket_file)
+                data = self._protocol.recv(socket_file)
             except Disconnect:
                 break
 
@@ -38,9 +38,9 @@ class Server(object):
                 # data: a list, data[0] is the command type
                 resp = self.get_response(data)
             except CommandError:
-                break
+                resp = Error(CommandError.args[0])
 
-            self._protocol.write_response(socket_file, resp)
+            self._protocol.send(socket_file, resp)
 
     def get_response(self, data):
         if type(data) is not list or len(data) < 1:
@@ -58,7 +58,7 @@ class Server(object):
 
     def _set(self, key, value):
         self._kv[key] = value
-        return ("Set %s = %s successfully" % key, value)
+        return ("Set %s = %s successfully" % (key, value))
 
     def _delete(self, key):
         if key in self._kv:
@@ -67,13 +67,13 @@ class Server(object):
         return ("%s not in redis" % key)
 
     def _mget(self, args):
-        return [self._get(key) for key in range(args)]
+        return [self._get(key) for key in args]
 
     # request example: *2\r\n $4\r\n MSET\r\n *2\r\n *2\r\n $4\r\n key1\r\n $6\r\n value1\r\n $4\r\n key2\r\n $6\r\n value2\r\n
     # (MSET [[key1, value1], [key2, value2]])
     def _mset(self, args):
-        for item in range(args):
-            self._set(item[0], item[1])
+        for key, val in args:
+            self._set(key, val)
         return "Set multi-value successfully"
 
     def run(self):
