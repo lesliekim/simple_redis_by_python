@@ -27,7 +27,8 @@ class ProtocolHandler(object):
         buf = BytesIO()
         self._write(data, buf)
         # buf.seek(0)
-        socket_file.write(buf.getvalue())
+        v = buf.getvalue()
+        socket_file.write(v)
         socket_file.flush()
 
     def handle_simple_string(self, socket_file):
